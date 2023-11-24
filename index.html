@@ -1,0 +1,616 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22><text y=%2224%22 font-size=%2224%22>🎧</text></svg>">
+    <link rel="manifest" href='data:application/manifest+json,{ "name": "Based%20Music%20Player", "short_name": "Based%20Music%20Player", "description": "Simple%20music%20player%20to%20play%20local%20MP3s", "display":"standalone"}' />
+    <script>
+var audio;
+var file;
+var playlist;
+var currentItem;
+var timer;
+var shuffle = false;
+var repeat = 'all';
+var speed = 1;
+var timeRemaining = false;
+var hist = [];
+var histIndex = -1;
+var smoothBlink = 0;
+const SEEK = 2;
+const LYRICS_SEARCH = "https://google.com/search?q=$song lyrics";
+
+const IMGs = {
+    Prev: '⏮',
+    Play: '▶',
+    Pause: '⏸',
+    Next: '⏭',
+    Stop: '⏹',
+    Open: '⏏',
+    ShuffleOff: '⇉',
+    ShuffleOn: '🔀',
+    RepeatNone: '⇥',
+    RepeatAll: '🔁',
+    RepeatOne: '🔂',
+    SpeedNormal: 'x1',
+    SpeedFast: 'x1.5',
+    SpeedFaster: 'x2',
+    About: '?'
+};
+
+function dragOverHandler(e) {
+  e.preventDefault();
+}
+
+function dropHandler(e) {
+  e.preventDefault();
+  addFiles(e.target.files || (e.dataTransfer && e.dataTransfer.files));
+}
+
+
+function saveState() {
+    localStorage.setItem("dark", document.getElementById('main').classList.contains('dark'));
+    //localStorage.setItem("shuffle", shuffle);
+    //localStorage.setItem("repeat", repeat);
+}
+
+function loadState() {
+    if(localStorage.getItem("dark") === 'true') {
+        document.getElementById('main').classList.add('dark');
+    } else {
+        document.getElementById('main').classList.remove('dark');
+    }
+    //shuffle = (localStorage.getItem("shuffle") === 'true');
+    //repeat = localStorage.getItem("repeat") || "all";
+    updateInfo();
+}
+
+function addFiles(files) {
+    for (var i = 0; i < files.length; i++) {
+        if (!files[i].name.endsWith('.mp3')) continue;
+        var item = document.createElement("option");
+		item.innerHTML = files[i].name.substring(0, files[i].name.lastIndexOf('.')) || files[i].name;
+        item.file = files[i];
+        playlist.appendChild(item);
+    }
+    if (playlist.options.length > 0) {
+        document.getElementById('welcome').classList.add('hidden');
+    }
+}
+
+function playItem(item, isFromHistory) {
+    if (item == null) return;
+    
+    var reader = new FileReader();
+    
+    reader.onload = (e) => {
+        audio.src = e.target.result;
+        audio.play();
+        audio.playbackRate = speed;
+        updateInfo();
+    }
+    reader.readAsDataURL(item.file);
+    
+    if (currentItem != null) currentItem.classList.remove('playing');
+    currentItem = item;
+    currentItem.classList.add('playing');
+    playlist.selectedIndex = [...currentItem.parentElement.children].indexOf(currentItem);
+    
+    if (!isFromHistory && item != hist[histIndex]) {     
+        hist.length = ++histIndex;
+        hist.push(currentItem);       
+    } 
+    
+    //console.log("-----");    
+    //for (var i = 0; i < hist.length; i++) {
+    //    console.log(hist[i].file.name);
+    //}
+    //console.log("-----");    
+}
+
+function buttonPlayPause() {
+    if (!audio.paused) {
+        audio.pause(); 
+    } else if (audio.currentTime > 0) {
+        audio.play();
+    } else {
+        playItem(playlist.options[playlist.selectedIndex == -1 && playlist.length > 0 ? 0 : playlist.selectedIndex], false);
+    }
+    updateInfo();
+}
+
+function buttonFF() {
+    if (audio.currentTime + SEEK * speed < audio.duration) {
+        audio.currentTime += (SEEK * speed);
+    } else if (audio.duration > 0) {
+        audio.currentTime = audio.duration;
+    }
+    smoothBlink = 2;
+    updateInfo();
+}
+
+function buttonRW() {
+    if (audio.currentTime - SEEK * speed> 0) {
+        audio.currentTime -= (SEEK * speed);
+    } else {
+        audio.currentTime = 0;
+    }
+    smoothBlink = 2;
+    updateInfo();
+}
+
+
+function seekPercent(pos) {
+    if (audio.duration > 0) {
+        audio.currentTime = Math.floor(audio.duration * pos / 10);
+        smoothBlink = 2;
+        updateInfo();
+    }
+}
+
+function doSeek() {
+    if (audio.duration > 0) {
+        audio.currentTime = parseInt(document.getElementById('seekSlider').value);
+        smoothBlink = 2;
+        updateInfo();
+    }
+}
+
+
+function buttonStop() {
+    audio.pause(); 
+    audio.currentTime = 0;
+    audio.src = '';
+    if (currentItem != null) currentItem.classList.remove('playing');
+    updateInfo();
+}
+
+function buttonNext(ended) {
+    if (playlist.options.length == 0) return;
+    
+    if (ended && currentItem != null && repeat === "one") {
+        //repeat one
+        playItem(currentItem);
+    } else if (histIndex < hist.length - 1) { 
+        //move forward in history
+        playItem(hist[++histIndex], true);
+    } else if (shuffle) { 
+        //shuffle next
+        playItem(playlist.options[Math.floor(Math.random() * playlist.options.length)]);
+    } else if (currentItem == null) { 
+        //play first or selected
+        playItem(playlist.options[playlist.selectedIndex == -1 && playlist.length > 0 ? 0 : playlist.selectedIndex], false);
+    } else { 
+        //play next in list
+        var currIndex = [...currentItem.parentElement.children].indexOf(currentItem);
+        if (repeat !== "all" && currIndex == playlist.options.length - 1) {
+            buttonStop();
+        } else {
+            playItem(playlist.options[(currIndex + 1) % playlist.options.length], false);
+        }
+    }
+    
+    focusCurrent();
+}
+
+function buttonPrev() {
+    if (playlist.options.length == 0 || currentItem == null) return;
+    
+    if (histIndex > 0) {
+        playItem(hist[--histIndex], true);
+        focusCurrent();
+    } 
+}
+
+function buttonOpen() {
+    file.value = null; 
+    file.click();
+}
+
+function buttonShuffle() {
+    shuffle = !shuffle; 
+    saveState();
+    updateInfo(); 
+}
+
+function buttonRepeat() {
+    repeat = repeat === "all" ? "one" : repeat === "one" ? "none" : "all";
+    saveState();
+    updateInfo(); 
+}
+
+function buttonPlaySpeed() {
+    speed = (((speed - 1) * 2 + 1) % 3) / 2 + 1;
+    audio.playbackRate = speed;
+    updateInfo();
+}
+
+function buttonTimeDisplay() {
+    timeRemaining = !timeRemaining;
+    updateInfo();
+}
+
+function focusCurrent(center, select) {
+    if (currentItem != null) {
+        currentItem.scrollIntoView({ block: center ? "center" : "nearest" });
+        if (select) {
+            playlist.selectedIndex = [...currentItem.parentElement.children].indexOf(currentItem);
+        }
+    }
+}
+
+function updateInfo() {
+    document.title = currentItem === undefined || audio.paused && audio.currentTime == 0 ? "Based Music Player" : currentItem.innerHTML;
+    document.getElementById('btnShuffle').innerHTML = shuffle ? IMGs.ShuffleOn : IMGs.ShuffleOff;
+    document.getElementById('btnRepeat').innerHTML = repeat === "none" ? IMGs.RepeatNone : repeat === "one" ? IMGs.RepeatOne : IMGs.RepeatAll;
+    document.getElementById('btnPlaySpeed').innerHTML = speed == 2 ? IMGs.SpeedFaster : speed == 1.5 ? IMGs.SpeedFast : IMGs.SpeedNormal;
+    document.getElementById('btnPP').innerHTML = audio.paused ? IMGs.Play : IMGs.Pause;
+    var info = document.getElementById('info');
+    var time = timeRemaining ? "-" + formatTime(audio.duration - audio.currentTime) : formatTime(audio.currentTime);
+    
+    var timeInfo = time + "/" + formatTime(audio.duration);
+    info.innerHTML = smoothBlink > 0 || !audio.paused || audio.currentTime == 0 || info.innerHTML.indexOf('&') == 0 ? timeInfo : timeInfo.replace(/./g, '&nbsp;');
+    
+    document.getElementById('seekSlider').max = audio.duration || 0;
+    document.getElementById('seekSlider').value = audio.currentTime || 0;
+    
+    if (smoothBlink > 0) smoothBlink--;
+}
+
+function formatTime(seconds) {
+    if (!isFinite(seconds)) return "-:--";
+    var minutes = Math.floor(seconds / 60);
+    seconds = Math.floor(seconds % 60);
+    seconds = (seconds >= 10) ? seconds : "0" + seconds;
+    return minutes + ":" + seconds;
+}
+
+function toggleAbout() {
+    document.getElementById('about').classList.toggle('hidden');
+}
+
+document.onkeydown = function(e) {
+    e = e || window.event;
+    
+    //console.log(e.key);
+    
+    if (!e.ctrlKey && !e.altKey) {
+        if (e.key === '?') {
+            toggleAbout();
+            e.preventDefault();
+            return;
+        } if (!isNaN(parseInt(e.key))) {
+            seekPercent(parseInt(e.key));
+            e.preventDefault();
+            return;
+        }
+        
+    
+        switch (e.code) {
+            case 'KeyC': buttonPlayPause(); e.preventDefault(); break;
+            case 'KeyV': buttonStop(); e.preventDefault(); break;
+            case 'KeyB': buttonNext(); e.preventDefault(); break;
+            case 'KeyZ': buttonPrev(); e.preventDefault(); break;
+            
+            case 'ArrowLeft': buttonRW(); e.preventDefault(); break;
+            case 'ArrowRight': buttonFF(); e.preventDefault(); break;
+            case 'KeyO': buttonOpen(); e.preventDefault(); break;
+            case 'KeyS': buttonShuffle(); e.preventDefault(); break;
+            case 'KeyR': buttonRepeat(); e.preventDefault(); break;
+            case 'KeyP': buttonPlaySpeed(); e.preventDefault(); break;
+            case 'KeyF': focusCurrent(true, true); e.preventDefault(); break;
+            
+            case 'KeyX': 
+            case 'Enter': 
+                playItem(playlist.options[playlist.selectedIndex == -1 && playlist.length > 0 ? 0 : playlist.selectedIndex], false);
+                e.preventDefault();
+            break;
+            
+            case 'Delete': 
+                while (playlist.selectedOptions.length > 0) {
+                    if (currentItem == playlist.selectedOptions[0]) buttonStop();
+                    
+                    //remove from history too, not very efficient in huge deletes
+                    hist = hist.filter(function(el) {
+                        return el != playlist.selectedOptions[0];
+                    });
+                    
+                    playlist.removeChild(playlist.selectedOptions[0]);
+                }
+                
+                if (playlist.options.length == 0) {
+                    document.getElementById('welcome').classList.remove('hidden');
+                }
+
+                e.preventDefault();
+            break;
+            
+            case 'KeyD': 
+                document.getElementById('main').classList.toggle('dark');
+                saveState();
+                e.preventDefault();
+            break;
+            
+            case 'KeyT':
+                buttonTimeDisplay();
+                e.preventDefault();
+            break;
+            
+            case 'KeyL': 
+                if (playlist.options[playlist.selectedIndex] !== undefined) {
+                    window.open(LYRICS_SEARCH.replace("$song", playlist.options[playlist.selectedIndex].innerHTML), "_blank");
+                }
+                e.preventDefault();
+            break;
+            
+            case 'Escape': 
+                document.getElementById('about').classList.add('hidden');
+                playlist.focus();
+            break;
+        }    
+    
+    } else if (e.ctrlKey && e.shiftKey) {
+        switch (e.code) {
+            case 'ArrowDown':
+                //move items down
+                var lastSelectedIndex = [...playlist.options].indexOf(playlist.selectedOptions[playlist.selectedOptions.length - 1]);
+                if (lastSelectedIndex > -1 && lastSelectedIndex < playlist.options.length - 1) {
+                    for (var i = playlist.selectedOptions.length - 1; i >= 0; i--) {
+                        playlist.insertBefore(playlist.selectedOptions[i], playlist.selectedOptions[i].nextSibling.nextSibling);
+                    }
+                }
+                e.preventDefault();
+            break;
+
+            case 'ArrowUp': 
+                //move items up
+                if ([...playlist.options].indexOf(playlist.selectedOptions[0]) > 0) {
+                    for (var i = 0; i < playlist.selectedOptions.length; i++) {
+                        playlist.insertBefore(playlist.selectedOptions[i], playlist.selectedOptions[i].previousSibling);
+                    }
+                }
+                e.preventDefault();
+            break;
+        }
+    } else if (e.ctrlKey) {
+        switch(e.code) {
+            case 'KeyC':
+                var text = "";
+                for (var i = 0; i < playlist.selectedOptions.length; i++) {
+                    text += playlist.selectedOptions[i].innerHTML;
+                    if (i != playlist.selectedOptions.length - 1) text += "\n";
+                }
+                if (text !== "") {
+                    navigator.clipboard.writeText(text);
+                }
+                
+                e.preventDefault();
+            break;
+        }
+    }
+
+
+};
+
+window.onload = function(e) {
+    audio = document.getElementById('audio');
+    file = document.getElementById('file');
+    playlist = document.getElementById('playlist');
+    
+    file.addEventListener('change', (e) => {
+        addFiles(e.target.files);
+    });
+
+    
+    playlist.addEventListener('dblclick', function(e) {
+        if (e.target.file !== undefined) {
+            playItem(e.target, false);
+        }
+    });
+    
+    audio.addEventListener('ended', function (e) {
+        buttonNext(true);
+    });
+    
+    playlist.addEventListener('blur', function() {
+        setTimeout(function() {
+            playlist.focus();
+        }, 10);    
+    });
+    
+    document.getElementById('btnPrev').innerHTML = IMGs.Prev;
+    document.getElementById('btnPP').innerHTML = IMGs.Play;
+    document.getElementById('btnStop').innerHTML = IMGs.Stop;
+    document.getElementById('btnNext').innerHTML = IMGs.Next;
+    document.getElementById('btnOpen').innerHTML = IMGs.Open;
+    document.getElementById('btnShuffle').innerHTML = IMGs.ShuffleOff;
+    document.getElementById('btnAbout').innerHTML = IMGs.About;
+    document.getElementById('btnRepeat').innerHTML = IMGs.RepeatAll;
+    document.getElementById('btnPlaySpeed').innerHTML = IMGs.SpeedNormal;
+    
+    playlist.focus();
+    
+    loadState();
+    
+    timer = setInterval(updateInfo, 500);
+}
+
+    </script>
+    <style>
+        html, body {
+			height: 100%;
+			margin: 0;
+        }
+        
+		body {
+			display: flex;
+            flex-direction: column;
+            font-family: sans-serif;
+		}
+		
+		#info {
+            font-family: monospace;
+		}
+		
+		#file {
+            visibility: hidden;
+            position: absolute;
+            left: -1000px;
+		}
+		
+		#playlist {
+            flex-grow: 1;
+            padding: 0;
+            outline:none;
+            border: 0;
+            background-color: transparent;
+            color: inherit;
+		}
+		
+		#playlist .playing {
+            background-color: #ffa;
+            color: black;
+		}
+		
+		#controls {
+            display: flex;
+            flex-direction: row;
+            background-color: lightgrey;
+            color: black;
+            width: 100%;
+            height: 30px;
+		}
+		
+		#left {
+            height: 100%;
+		}
+		
+		#right {
+            width: 30px;
+            height: 100%;
+		}
+		
+		#center {
+            margin: auto 5px;
+            flex: 1;
+		}
+
+		#controls button {
+            float: left;
+            text-align: center;
+            vertical-align: middle;
+            line-height: 30px;
+            height: 30px;
+            width: 30px;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            background-color: transparent;
+            outline: none;
+		}
+		
+        #controls button:hover {
+            background-color: grey;
+		}
+		
+		#info {
+            float: left;
+            vertical-align: middle;
+            height: 30px;
+            line-height: 30px;
+            margin: 0 5px;
+            cursor: default;
+		}
+		
+		#btnAbout {
+            margin: 0 auto;
+		}
+		
+		#btnPlaySpeed {
+            font-size: 60%;
+            font-weight: normal;
+		}
+		
+		#seekSlider {
+            width: 100%;
+		}
+		
+		#about {
+            margin: 0;
+            padding: 10px;
+            background-color: lightgrey;
+            color: black;
+		}
+		
+		.dark {
+            background-color: black;
+            color: lightgrey;
+		}
+		
+		.hidden{
+            display: none;
+		}
+    </style>
+</head>
+    <body id="main" ondrop="dropHandler(event);" ondragover="dragOverHandler(event);">
+        <div id="controls">
+            <div id="left">
+                <input type="file" id="file" multiple="true" accept="audio/mp3"/>
+                <audio id="audio"></audio>
+                <button id="btnPrev" onclick="buttonPrev();" title="Previous"></button>
+                <button id="btnPP" onclick="buttonPlayPause();" title="Play/Pause"></button>
+                <button id="btnStop" onclick="buttonStop();" title="Stop"></button>
+                <button id="btnNext" onclick="buttonNext();" title="Next"></button>
+                <button id="btnOpen" onclick="buttonOpen();" title="Open"></button>
+                <button id="btnShuffle" onclick="buttonShuffle();" title="Shuffle"></button>
+                <button id="btnRepeat" onclick="buttonRepeat();" title="Repeat"></button>
+                <button id="btnPlaySpeed" onclick="buttonPlaySpeed();" title="Play speed"></button>
+                <span id="info" onclick="buttonTimeDisplay();"></span>
+            </div>
+            <div id="center">
+                <input type="range" id="seekSlider" max="0" value="0" oninput="doSeek();">
+            </div>
+            <div id="right">
+                <button id="btnAbout" onclick="toggleAbout();" title="About"></button>
+            </div>
+        </div>
+<pre id="about" class="hidden">
+<b>🎧 Based Music Player</b>
+2023 Aleksandar Lekov (<a href="https://lekov.net/player">lekov.net/player</a>)
+
+Keyboard shortcuts:
+ 
+ z                    play previous
+ x  or  enter         (stop and) play selected
+ c                    pause/resume
+ v                    stop
+ b                    play next
+ left/right           seek back/forward
+ 0..9                 seek to 0%..90%  
+ s                    toggle shuffle
+ r                    repeat none/all/one
+ p                    toggle playback speed x1/x1.5/x2
+ t                    toggle elapsed/remaining time display
+
+ o                    open dialog to add files
+ del                  remove items from the list
+ up/down              naviagte the list
+ ctrl+shift+up/down   move items up/down the list
+ f                    focus current in the list
+ ctrl+c               copy selected to clipboard as text
+ 
+ d                    toggle dark theme
+ l                    search lyrics
+ ?                    toggle this screen
+ esc                  back to the list
+</pre>
+
+<pre id="welcome">
+Click <b><script>document.write(IMGs.Open)</script></b> or press <b>o</b> or <b>drag&amp;drop</b> to add MP3s to the playlist
+
+*files are never transferred/uploaded over the internet
+</pre>
+        <select id="playlist" multiple="true" title="Playlist"/>
+    </body>
+</html>
